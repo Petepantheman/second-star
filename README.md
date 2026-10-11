@@ -119,6 +119,31 @@ The tests feed it 23 deliberately broken vaults and 7 sets of bad claims, and it
 [PROOF.md](PROOF.md) has the exact statement, which holds per coin of exactly the planned amount, and its four
 assumptions.
 
+## If you're building…
+
+Everything here is MIT-licensed. Take what helps; you don't need to ask.
+
+- **Agent payments (Lightning, L402, wallet budgets).** Today's agent budgets live in software: scoped credentials,
+  max-cost flags, per-session caps. Whoever controls the machine or the credentials can lift them. Second Star shows
+  the shape of a budget the chain itself enforces, once Bitcoin has a template covenant. One natural pattern, not built
+  in this repo yet, is to make the agent's own Lightning wallet a menu address that gets refilled one tranche per
+  period. A hijacked agent could then lose at most what is in its wallet plus the next tranche. `hook.py`'s two tools
+  (`pay_menu`, `send`) and its planted-order notes make a ready test harness for your own agent.
+- **Covenant proposals (CTV, TEMPLATEHASH, BIP-448).** This is the same use case written for both opcodes, put through
+  the same attacks, and both pass. `hashes.py` implements both template hashes in a 45-line file and passes every
+  official BIP-119 and BIP-446 vector. The TEMPLATEHASH vault also confirms on Bitcoin Inquisition, so the published
+  BIP-446 spec and that implementation agree on every transaction here.
+- **Vaults.** `prove.py` is a standalone checker, about 400 lines of standard-library Python. Three ideas in it carry
+  over to other template vaults:
+  - Rebuild each Taproot address from the listed leaves, so no leaf can hide.
+  - Accept only known leaf shapes.
+  - Walk every reachable state and compute the worst case.
+  The 23 broken vaults in `tests/test_prove.py` make a reusable list of mistakes to test your own checker against.
+- **Testing covenant transactions.** `node.py` and the `Lab` class in `__main__.py` run a throwaway regtest node, wrap
+  a zero-fee version-3 transaction in a fee-paying package, and then ask the node's own miner to build a block with it.
+  So every attack is judged twice: once by relay policy and once by consensus. A rejection you only see at the mempool
+  can be policy rather than the covenant; the miner-built block tells them apart.
+
 ## Limits, briefly
 
 - **Not on mainnet.** There, today, these scripts are anyone-can-spend once a leaf is revealed.
