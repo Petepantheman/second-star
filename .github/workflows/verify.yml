@@ -1,0 +1,49 @@
+name: verify
+
+# Runs the whole story on GitHub's machines: the offline tests, then a throwaway regtest node from the official
+# Bitcoin Inquisition release (hash pinned below), the vault built both ways, proved, attacked and used.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Offline tests (official vectors, builder, prover)
+        run: python -m unittest discover -s tests -v
+
+  node:
+    needs: offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      INQ: bitcoin-29.4-inq
+      INQ_SHA256: 7ad3cb745575f7c21916cf3c294a95f59e11e5bf6e37c4a47b92697cf4723e22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download Bitcoin Inquisition and check its hash
+        run: |
+          curl -sSfL -o inq.tar.gz "https://github.com/bitcoin-inquisition/bitcoin/releases/download/v29.4-inq/${INQ}-x86_64-linux-gnu.tar.gz"
+          echo "${INQ_SHA256}  inq.tar.gz" | sha256sum -c -
+          tar xzf inq.tar.gz
+      - name: The whole story on a throwaway regtest node
+        run: python -m secondstar --bitcoind "./${INQ}/bin/bitcoind" --out result.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-answers
+          path: result.json
