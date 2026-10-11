@@ -70,7 +70,8 @@ amounts, an owner leaf at depth 129, and a template that does not match its hash
 ## What is not machine-checked
 
 The step from "the leaf commits to this hash" to "only this transaction can spend through the leaf" is the meaning of
-the opcodes under A2 and A4. The prover applies that meaning; it does not re-derive it. The node checks it against a
+the opcodes under A2 and A4. Strictly, the hash fixes the transaction's version, locktime, sequences and outputs. On
+CTV the witness stays free, so an annex can be added (LIMITS.md, item 11). That changes nothing the statement covers. The prover applies that meaning; it does not re-derive it. The node checks it against a
 real implementation. `python -m secondstar` spends **every covenant leaf of every state** of both vaults on the node.
 Each committed transaction confirms. The same transaction with its first output redirected to an attacker (same
 amounts, zero fee) is refused both by the mempool and by a block built by the node's own miner. The owner then

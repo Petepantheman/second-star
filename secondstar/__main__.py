@@ -21,6 +21,7 @@ FUNDING, TRANCHE, PERIODS, DELAY = 1_000_000, 100_000, 3, 3
 CHILD_FEE, SWEEP_FEE = 10_000, 500
 NEEDLE = {"ctv": "CHECKTEMPLATEVERIFY", "templatehash": "false/empty top stack element"}
 WALLETS = ("miner", "menu0", "menu1", "owner", "hook")
+ANNEX = bytes([0x50]) + bytes(8)   # a well-formed Taproot annex: 0x50, then anything
 
 
 def sats(btc) -> int:
@@ -218,10 +219,51 @@ def run_opcode(lab: Lab, opcode: str, agent: str | None) -> dict:
     print(f"  owner {'sweep everything home with one signature, no wait':<72} "
           f"{'CONFIRMED' if got == FUNDING - SWEEP_FEE else 'FAILED'} (+{got:,})")
 
-    record = {"opcode": opcode, "certificate": cert, "moved": moved, "every_leaf": every_leaf(lab, v, secret, cold, hook_spk)}
+    annex = annex_check(lab, v)
+    record = {"opcode": opcode, "certificate": cert, "moved": moved, "annex": annex,
+              "every_leaf": every_leaf(lab, v, secret, cold, hook_spk)}
     if agent:
         record["agent"] = run_agent(lab, v, menu_addr, hook_addr, agent)
     return record
+
+
+def annex_check(lab: Lab, v: vault.Vault) -> dict:
+    """The honest payment with a Taproot annex appended to its witness. BIP-119 does not commit to the annex, so on the
+    CTV vault this is consensus-valid (relay policy still refuses it) and must pay exactly the template. BIP-446 does
+    commit to it, so the TEMPLATEHASH vault must refuse it at both levels."""
+    print("   an annex on the honest payment (a fresh coin)")
+    coin = lab.fund(v.root.script_pubkey)
+    lab.mine(DELAY)
+    before = lab.balances()
+    tx = vault.spend(v.root, "pay:0", *coin)
+    tx.witness[0] = tx.witness[0] + [ANNEX]
+    ok, reason = lab.submit(tx)
+    if ok:
+        lab.mine(1)
+        mok, mreason = True, "mined from the mempool"
+    else:
+        mok, mreason = lab.as_miner(tx)
+    moved = {w: lab.balance(w) - before[w] for w in before}
+    template = v.root.choices["pay:0"].template
+    if v.opcode == "ctv":
+        outs = []
+        if mok:
+            raw = lab.n.call("getrawtransaction", tx.txid(), True)
+            outs = [(sats(o["value"]), bytes.fromhex(o["scriptPubKey"]["hex"])) for o in raw["vout"]]
+        good = (not ok and mok and outs == [(o.value, o.script_pubkey) for o in template.vout]
+                and moved == {"menu0": TRANCHE, "menu1": 0, "owner": 0, "hook": 0})
+        verdict = "MINED, exactly the template" if good else "UNEXPECTED"
+    else:
+        good = not ok and not mok and NEEDLE["templatehash"] in mreason and not any(moved.values())
+        verdict = "REFUSED" if good else "UNEXPECTED"
+    print(f"  anyone {'append an annex to the honest payment':<71} {verdict}")
+    print(f"        mempool: {_short(reason)}")
+    print(f"        miner  : {_short(mreason)}")
+    if not good:
+        lab.fails.append(f"{v.opcode} annex: mempool [{reason}] block [{mreason}] moved {moved}")
+    lab.events.append({"who": "anyone", "tried": "append an annex to the honest payment", "mempool": reason,
+                       "block": mreason, "moved": moved, "verdict": verdict})
+    return {"mempool": reason, "block": mreason, "moved": moved, "verdict": verdict}
 
 
 def every_leaf(lab: Lab, v: vault.Vault, secret: int, cold: bytes, hook_spk: bytes) -> dict:

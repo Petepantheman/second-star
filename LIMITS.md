@@ -40,8 +40,9 @@ same. Treat it like cold storage, because it is.
 Covenant transactions are version 3, pay zero fee, and carry a 0-value pay-to-anchor output. Whoever broadcasts adds a
 child that spends the anchor and pays the miner. That needs relay policy that is not consensus: TRUC (version 3) and
 pay-to-anchor shipped in Bitcoin Core 28.0, and the 0-value "ephemeral dust" anchor in 29.0. Inquisition 29.x has all
-three. The run shows what happens without them. A version-2 rewrite fails with `min relay fee not met`, and taking the
-fee from the vault fails with `dust, tx with dust output must be 0-fee`. A miner can still mine a covenant transaction
+three. The run shows transactions that break those rules. A version-2 rewrite falls outside TRUC, so the mempool
+returns `min relay fee not met`. Taking a fee from the vault puts a non-zero fee next to the dust anchor, so the
+ephemeral-dust policy returns `dust, tx with dust output must be 0-fee`. A miner can still mine a covenant transaction
 without its child, because that is consensus-valid. The 0-value anchor is then left behind as a dust output.
 
 ## 6. Time is counted in blocks, not days
@@ -79,3 +80,10 @@ Bitcoin's consensus rules themselves; it assumes the node implements BIP-68, BIP
 written. The node run is the evidence for that assumption on this build: every covenant leaf of every state was spent on the
 node, each committed transaction confirmed, and a copy redirected to an attacker was refused, both by the mempool and
 by a miner-built block.
+
+## 11. On CTV, the witness is not committed
+
+BIP-119 hashes the transaction's version, locktime, sequences and outputs, but not its witness. So anyone can append a
+Taproot annex to an honest CTV payment. Relay refuses it (`bad-witness-nonstandard`), but a miner can confirm it. The
+run measures this: the payment confirms with the annex attached, and the money goes exactly where the template says.
+BIP-446 commits to the annex, so the TEMPLATEHASH vault refuses the same transaction at both levels.

@@ -37,7 +37,7 @@ A naive model is one thing, so I also tried a frontier AI model as the attacker.
 vaults (leaf scripts, control blocks, templates, coins, addresses) and three rounds to break them, and it saw the
 node's answers after each round. It crafted 18 transactions:
 - version 1, or the sequence-disable bit, to dodge the timelock;
-- an annex;
+- an annex on a payment with changed outputs;
 - a different script under the same amounts;
 - value moved onto the anchor;
 - the remainder split into two vaults;
@@ -47,8 +47,22 @@ Every one was refused, both by the mempool and by a block the node's own miner t
 nothing off the plan ever confirmed.
 
 That round needs the model, so it isn't part of the one-command run. Two of its ideas, the split and the two-coin
-spend, are now in the scripted Hook, so you can rerun them yourself. The rest are close variants of attacks the
-scripted Hook and the every-leaf check already make: a changed version, a stripped timelock, a redirected output.
+spend, are now in the scripted Hook, so you can rerun them yourself. Version, timelock and output tricks are close
+variants of attacks the scripted Hook and the every-leaf check already make. The annex gets its own check, below.
+
+## The one thing that gets through
+
+CTV (BIP-119) does not commit to the Taproot annex, an optional field at the end of the witness. TEMPLATEHASH
+(BIP-446) does. So the run tries one more thing on each vault: the honest payment, with an annex appended.
+
+| vault | mempool | miner-built block | money |
+|---|---|---|---|
+| CTV | `bad-witness-nonstandard` | **mined** | exactly the template: menu 0 +100,000, Hook +0 |
+| TEMPLATEHASH | `bad-witness-nonstandard` | `false/empty top stack element` | nothing moves |
+
+On the CTV vault, a miner can confirm the payment with extra witness bytes attached. Where the money goes doesn't
+change: the outputs, amounts and timing are still exactly the template's. It is still a real difference between the
+two proposals, and it is the kind of thing this repo exists to measure.
 
 
 ## Run it yourself
@@ -91,7 +105,7 @@ expected consensus reason:
 | rewrite it as a version-2 transaction | `min relay fee not met` | covenant failure |
 | split the remainder into two vault coins (twice the allowance) | covenant failure | covenant failure |
 | spend two vault coins in one payment, the second as miner fee | `dust, tx with dust output must be 0-fee` | covenant failure |
-| use the owner's exit, validly signed with his own key | `Invalid Schnorr signature` | `Invalid Schnorr signature` |
+| use the owner's exit, signed with Hook's key rather than the owner's | `Invalid Schnorr signature` | `Invalid Schnorr signature` |
 | use the owner's exit with no signature | `false/empty top stack element` | `false/empty top stack element` |
 
 "Covenant failure" is `Script failed an OP_CHECKTEMPLATEVERIFY operation` on the CTV vault. On the TEMPLATEHASH vault,
@@ -121,7 +135,8 @@ Each vault is a Taproot output with no key path. Each of its covenant leaves com
 
 Each committed transaction carries a relative timelock (BIP-68), so a step can only follow the previous one after
 `delay` blocks. Covenant transactions pay zero fee and carry a 0-value pay-to-anchor output; whoever broadcasts adds a
-child that pays the miner. Because the anchor is inside the template, the child can't change who gets paid.
+child that pays the miner. The template commits to every output, including the anchor. The child can only spend the
+anchor to pay the miner; it cannot change the menu payment or the next vault.
 
 Both opcodes are here on purpose. Bitcoin hasn't decided which covenant it wants, if any. This repo doesn't take a
 side. It shows what either one would let an agent's allowance look like, and both pass the same attacks.
@@ -148,7 +163,8 @@ Everything here is MIT-licensed. Take what helps; you don't need to ask.
   max-cost flags, per-session caps. Whoever controls the machine or the credentials can lift them. Second Star shows
   the shape of a budget the chain itself enforces, once Bitcoin has a template covenant. One natural pattern, not built
   in this repo yet, is to make the agent's own Lightning wallet a menu address that gets refilled one tranche per
-  period. A hijacked agent could then lose at most what is in its wallet plus the next tranche. `hook.py`'s two tools
+  period. A hijacked agent can then pay that wallet one tranche per period until the owner sweeps, or pay any other menu
+  address instead. The amount at risk is the wallet balance plus every tranche the owner does not claw back. `hook.py`'s two tools
   (`pay_menu`, `send`) and its planted-order notes make a ready test harness for your own agent.
 - **Covenant proposals (CTV, TEMPLATEHASH, BIP-448).** This is the same use case written for both opcodes, put through
   the same attacks, and both pass. `hashes.py` implements both template hashes in a 45-line file and passes every
@@ -172,8 +188,10 @@ Everything here is MIT-licensed. Take what helps; you don't need to ask.
 - **The menu is fixed** when the coins are locked. A new payee means a new vault.
 - **The menu is the blast radius.** A hijacked agent can still pay the wrong item on the menu, or skip.
 - **The owner's key can do anything.** Keep it cold.
+- **On CTV the witness is free.** An annex can ride along on an honest payment; the money still goes exactly where
+  planned.
 
-All ten are in [LIMITS.md](LIMITS.md).
+All eleven are in [LIMITS.md](LIMITS.md).
 
 ## Prior art
 
