@@ -263,7 +263,7 @@ class AttacksMissTheHash(unittest.TestCase):
         st = v.root
         committed = {ctv_hash(c.template, 0) for c in st.choices.values()}
         committed_th = {template_hash(c.template, 0) for c in st.choices.values()}
-        for a in hook.scripted(st, MENU, THIEF, ("ab" * 32, 0)):
+        for a in hook.scripted(st, MENU, THIEF, ("ab" * 32, 0), ("cd" * 32, 1)):
             if a.owner_path:
                 continue
             self.assertNotIn(ctv_hash(a.tx, 0), committed, a.label)

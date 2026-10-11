@@ -31,6 +31,25 @@ result: hook +0
 
 Nobody had to catch it. The agent never had anything to steal with.
 
+## Then I gave a frontier AI the blueprint
+
+A naive model is one thing, so I also tried a frontier AI model as the attacker. It got every public byte of both
+vaults (leaf scripts, control blocks, templates, coins, addresses) and three rounds to break them, and it saw the
+node's answers after each round. It crafted 18 transactions:
+- version 1, or the sequence-disable bit, to dodge the timelock;
+- an annex;
+- a different script under the same amounts;
+- value moved onto the anchor;
+- the remainder split into two vaults;
+- two vault coins spent together, so the second becomes a miner fee.
+
+Every one was refused, both by the mempool and by a block the node's own miner tried to build. Hook got 0, and
+nothing off the plan ever confirmed.
+
+That round needs the model, so it isn't part of the one-command run. Two of its ideas, the split and the two-coin
+spend, are now in the scripted Hook, so you can rerun them yourself. The rest are close variants of attacks the
+scripted Hook and the every-leaf check already make: a changed version, a stripped timelock, a redirected output.
+
 
 ## Run it yourself
 
@@ -70,6 +89,8 @@ expected consensus reason:
 | pay both menu addresses at once | covenant failure | covenant failure |
 | skim 1,000 sats as miner fee | `dust, tx with dust output must be 0-fee` | covenant failure |
 | rewrite it as a version-2 transaction | `min relay fee not met` | covenant failure |
+| split the remainder into two vault coins (twice the allowance) | covenant failure | covenant failure |
+| spend two vault coins in one payment, the second as miner fee | `dust, tx with dust output must be 0-fee` | covenant failure |
 | use the owner's exit, validly signed with his own key | `Invalid Schnorr signature` | `Invalid Schnorr signature` |
 | use the owner's exit with no signature | `false/empty top stack element` | `false/empty top stack element` |
 

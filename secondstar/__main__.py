@@ -159,10 +159,11 @@ def run_opcode(lab: Lab, opcode: str, agent: str | None) -> dict:
 
     print("   period 1")
     coin = lab.fund(v.root.script_pubkey)
+    spare = lab.fund(v.root.script_pubkey)   # a second coin at the same address, for the two-coins attack
     st = v.root
     lab.refuse("hook", "pay the menu before the wait is over", vault.spend(st, "pay:0", *coin),
                "non-BIP68-final", "bad-txns-nonfinal")
-    attacks = hook.scripted(st, menu, hook_spk, coin)
+    attacks = hook.scripted(st, menu, hook_spk, coin, spare)
     early = next(a for a in attacks if a.label == "no-wait")
     lab.refuse("hook", early.says, early.tx, needle, needle)
     lab.mine(DELAY)
@@ -173,7 +174,7 @@ def run_opcode(lab: Lab, opcode: str, agent: str | None) -> dict:
             want = "Invalid Schnorr signature" if a.label == "forge" else "false/empty top stack element"
             lab.refuse("hook", a.says, a.tx, want, want, alone=True)
         else:
-            lab.refuse("hook", a.says, a.tx, needle if a.label in ("drain", "redirect", "double") else None,
+            lab.refuse("hook", a.says, a.tx, needle if a.label in ("drain", "redirect", "double", "split") else None,
                        needle)
     pay = vault.spend(st, "pay:0", *coin)
     lab.accept("agent", f"pay menu 0 its {TRANCHE:,} sats", pay)
