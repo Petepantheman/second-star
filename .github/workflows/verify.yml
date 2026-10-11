@@ -16,8 +16,8 @@ jobs:
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - name: Offline tests (official vectors, builder, prover)
@@ -31,8 +31,8 @@ jobs:
       INQ: bitcoin-29.4-inq
       INQ_SHA256: 7ad3cb745575f7c21916cf3c294a95f59e11e5bf6e37c4a47b92697cf4723e22
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Download Bitcoin Inquisition and check its hash
@@ -42,7 +42,7 @@ jobs:
           tar xzf inq.tar.gz
       - name: The whole story on a throwaway regtest node
         run: python -m secondstar --bitcoind "./${INQ}/bin/bitcoind" --out result.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: node-answers
