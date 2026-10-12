@@ -36,10 +36,11 @@ def _free_port() -> int:
 
 
 class Node:
-    def __init__(self, bitcoind: Path, keep: bool = False):
+    def __init__(self, bitcoind: Path, keep: bool = False, zmq: bool = False):
         self.bitcoind, self.keep = bitcoind, keep
         self.datadir = Path(tempfile.mkdtemp(prefix="secondstar-"))
         self.port = _free_port()
+        self.zmq = (f"tcp://127.0.0.1:{_free_port()}", f"tcp://127.0.0.1:{_free_port()}") if zmq else None
         self.user, self.password = "ss", secrets.token_hex(16)
         self.proc: subprocess.Popen | None = None
 
@@ -61,6 +62,8 @@ class Node:
         cmd = [str(self.bitcoind), f"-datadir={self.datadir}", "-regtest", "-server=1", "-listen=0",
                "-txindex=1", f"-rpcport={self.port}", f"-rpcuser={self.user}", f"-rpcpassword={self.password}",
                "-fallbackfee=0.0001", "-printtoconsole=0"]
+        if self.zmq:   # Lightning nodes follow the chain through these
+            cmd += [f"-zmqpubrawblock={self.zmq[0]}", f"-zmqpubrawtx={self.zmq[1]}"]
         kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         if os.name == "nt":
             kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW

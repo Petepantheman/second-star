@@ -334,13 +334,14 @@ def prove(vault: dict, claims: dict) -> dict:
             if sum(o["value"] for o in tx["outs"]) != value.get(name):
                 fails.append(f"{tag} leaf {idx}: outputs {sum(o['value'] for o in tx['outs'])} "
                              f"!= vault value {value.get(name)}")
-            payout, forward = 0, []
+            payout, forward, paid_to = 0, [], []
             for o in tx["outs"]:
                 if o["spk"] == ANCHOR:
                     if o["value"] != 0:
                         fails.append(f"{tag} leaf {idx}: anchor carries {o['value']} sats anyone could take")
                 elif o["spk"] in menu:
                     payout += o["value"]
+                    paid_to.append(o["spk"])
                 elif o["spk"] == cold:
                     pass
                 elif o["spk"].hex() in vaults:
@@ -357,12 +358,13 @@ def prove(vault: dict, claims: dict) -> dict:
                 if value.setdefault(nxt, forward[0]["value"]) != forward[0]["value"]:
                     fails.append(f"vault {nxt[:16]}: reached with two different amounts")
                 order.append(nxt)
-            edges[name].append((payout, nxt))
+            edges[name].append((payout, nxt, tuple(paid_to)))
         if cold_leaves != 1:
             fails.append(f"{tag}: {cold_leaves} owner leaves (expected exactly 1)")
     extra = set(vaults) - seen_vaults
     if extra:
         fails.append(f"{len(extra)} described vaults are unreachable from the root")
+    locks_note = _check_swap_locks(claims, menu, cold_key, h, fails)
     best = {}  # vault -> {k: most the menu can receive in exactly k covenant spends}
 
     def walk(name: str, path: tuple) -> dict:
@@ -371,7 +373,7 @@ def prove(vault: dict, claims: dict) -> dict:
         if name in best:
             return best[name]
         out: dict[int, int] = {}
-        for payout, nxt in edges.get(name, []):
+        for payout, nxt, _ in edges.get(name, []):
             out[1] = max(out.get(1, 0), payout)
             if nxt is not None:
                 for k, p in walk(nxt, path + (name,)).items():
@@ -390,6 +392,8 @@ def prove(vault: dict, claims: dict) -> dict:
                 fails.append(f"after {k} steps the menu could receive {p} > {k} x {tranche}")
         if profile and max(profile) > periods:
             fails.append(f"a path has {max(profile)} covenant steps, more than {periods} periods")
+        if locks_note and not fails:
+            _each_lock_once(root, edges, fails)
     return {
         "verdict": "PROVED" if not fails else "REFUTED",
         "opcode": opcode,
@@ -401,10 +405,83 @@ def prove(vault: dict, claims: dict) -> dict:
         "statement": (f"For one coin of exactly {funding} sats at the root address, and without the owner's key: "
                       f"it can only pay the {len(menu)} menu address(es), at most {tranche} sats per step, at most "
                       f"one step per {delay} blocks, at most {periods} steps; every other sat stays in the vault or "
-                      f"goes to the owner's address. Each further coin sent to the address is a separate allowance "
-                      f"with the same limits, and sats above {funding} in a coin go to a miner as fee."),
+                      f"goes to the owner's address. "
+                      + (f"Fund the vault once: each claim reveals its secret on-chain, so the provider could claim a "
+                         f"second coin's tranches without paying. " if locks_note else
+                         f"Each further coin sent to the address is a separate allowance with the same limits. ")
+                      + f"Sats above {funding} in a coin go to a miner as fee." + locks_note),
         "failures": fails,
     }
+
+
+def _script_num(n: int) -> bytes:
+    if 1 <= n <= 16:
+        return bytes([0x50 + n])
+    body = bytearray()
+    while n:
+        body.append(n & 0xFF)
+        n >>= 8
+    if body[-1] & 0x80:
+        body.append(0)
+    return bytes([len(body)]) + bytes(body)
+
+
+def _check_swap_locks(claims: dict, menu: list[bytes], cold_key: bytes, h: bytes, fails: list[str]) -> str:
+    """Optional: claims["swap_locks"] says every menu address is a swap lock. Rebuild each lock from its parts and
+    require the menu to be exactly those locks, each refunding to the owner's key."""
+    locks = claims.get("swap_locks")
+    if locks is None:
+        return ""
+    built, hashes = set(), set()
+    for i, lk in enumerate(locks):
+        try:
+            ph, prov, owner = (bytes.fromhex(lk[k]) for k in ("payment_hash", "provider_key", "owner_key"))
+            r = lk["refund_delay"]
+        except (KeyError, TypeError, ValueError) as err:
+            fails.append(f"swap lock {i}: malformed ({err})")
+            continue
+        if len(ph) != 32 or len(prov) != 32 or type(r) is not int or not 1 <= r <= 0xFFFF:
+            fails.append(f"swap lock {i}: bad hash, key or refund delay")
+            continue
+        if ph == bytes(32) or prov == h or _lift_x(int.from_bytes(prov, "big")) is None:
+            fails.append(f"swap lock {i}: the claim path can never be used (zero hash or unusable provider key)")
+            continue
+        if ph in hashes:
+            fails.append(f"swap lock {i}: shares its payment hash with another lock, so one Lightning payment "
+                         f"would unlock both")
+            continue
+        hashes.add(ph)
+        if owner != cold_key:
+            fails.append(f"swap lock {i}: the refund goes to a key that is not the owner's")
+            continue
+        claim = b"\xa8\x20" + ph + b"\x88\x20" + prov + b"\xac"
+        refund = _script_num(r) + b"\xb2\x75\x20" + owner + b"\xac"
+        built.add(b"\x51\x20" + _output_key(h, _branch(_leaf(claim), _leaf(refund))))
+    if built != set(menu):
+        fails.append("the menu is not exactly the listed swap locks")
+    return (f" Every menu address is a swap lock: its provider can take it only with the preimage of its hash, and "
+            f"otherwise it returns to the owner after its refund delay.")
+
+
+def _each_lock_once(root: str, edges: dict, fails: list[str]) -> None:
+    """With swap locks, no lock may be paid twice along any path: each lock's secret is revealed by its first claim,
+    so a second payment into the same lock could be claimed without a Lightning payment."""
+    seen: set = set()
+
+    def go(name: str, paid: frozenset) -> bool:
+        if (name, paid) in seen:
+            return True
+        seen.add((name, paid))
+        for _, nxt, to in edges.get(name, []):
+            if any(spk in paid for spk in to) or len(set(to)) != len(to):
+                fails.append("a swap lock can be paid twice on one path, so one Lightning payment could unlock "
+                             "more than one tranche")
+                return False
+            if nxt is not None and not go(nxt, paid | frozenset(to)):
+                return False
+        return True
+
+    go(root, frozenset())
 
 
 def main(argv: list[str]) -> int:

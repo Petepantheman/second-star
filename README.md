@@ -65,6 +65,24 @@ change: the outputs, amounts and timing are still exactly the template's. It is 
 two proposals, and it is the kind of thing this repo exists to measure.
 
 
+## And on Lightning
+
+The vault has a speed limit; a Lightning wallet does not. So I connected the allowance to an agent's Lightning wallet
+three ways and attacked each one with Hook in control of the agent's machine:
+
+| where each tranche goes | who can take a tranche | measured |
+|---|---|---|
+| the agent's own on-chain wallet | Hook alone | Hook +86,182 sats |
+| a swap lock, secret on the agent's node | Hook plus a dishonest provider | provider +99,500, agent +0 |
+| a swap lock, hold invoice on the owner's node | not Hook, even with a dishonest provider, before it lands: the secret never touches the agent's machine | every refill +99,000; every secret Hook had was tried, all refused |
+
+In the third design the vault pays each tranche into its own swap lock. To claim it, the provider needs a secret that
+it gets by paying 99,000 sats (the tranche minus a 1,000-sat swap fee) to a small node on the owner's side, which then
+pays the agent. The secret lives on the owner's side, never on the agent's machine. That holds while the owner's
+machine is safe and each vault is funded once. If the provider never pays, the tranche goes back to the owner. Whatever has already reached the agent's Lightning wallet
+can still be spent by whoever controls it; the covenant limits how fast new money arrives. Details, checks and limits:
+[LIGHTNING.md](LIGHTNING.md).
+
 ## Run it yourself
 
 Don't trust this page. You need Python 3.10 or newer and a
@@ -77,7 +95,11 @@ needed: the code is standard-library Python.
 python -m unittest discover -s tests                     # offline: official vectors, builder, prover
 python -m secondstar --bitcoind /path/to/bitcoind         # the whole story on a throwaway regtest node
 python -m secondstar --agent ollama:<model>               # optional: a local model plays the hijacked agent
+python -m secondstar.lightning_run --bitcoind /path/to/bitcoind --lnd /path/to/lnd   # the Lightning layer
 ```
+
+The Lightning run also needs [LND 0.21](https://github.com/lightningnetwork/lnd/releases/tag/v0.21.0-beta) (`lncli` next
+to `lnd`).
 
 The second command starts a private node in a temporary folder and builds the vault twice, once per opcode. It proves
 each vault, lets Captain Hook try everything, walks the honest agent through all three periods, spends every leaf of
@@ -128,7 +150,9 @@ one signature.
                  └─ cold   the owner's key, any time
 ```
 
-Each vault is a Taproot output with no key path. Each of its covenant leaves commits to one exact transaction:
+Each vault is a Taproot output whose internal key is a point nobody knows the secret of (BIP-341's NUMS key), so short
+of a quantum computer (see the limits below) only its leaves can spend it. Each of its covenant leaves commits to one
+exact transaction:
 
 - **CTV** ([BIP-119](https://github.com/bitcoin/bips/blob/master/bip-0119.mediawiki)): `<hash> OP_CHECKTEMPLATEVERIFY`
 - **TEMPLATEHASH** ([BIP-446](https://github.com/bitcoin/bips/blob/master/bip-0446.md)): `<hash> OP_TEMPLATEHASH OP_EQUAL`
@@ -161,10 +185,10 @@ Everything here is MIT-licensed. Take what helps; you don't need to ask.
 
 - **Agent payments (Lightning, L402, wallet budgets).** Today's agent budgets live in software: scoped credentials,
   max-cost flags, per-session caps. Whoever controls the machine or the credentials can lift them. Second Star shows
-  the shape of a budget the chain itself enforces, once Bitcoin has a template covenant. One natural pattern, not built
-  in this repo yet, is to make the agent's own Lightning wallet a menu address that gets refilled one tranche per
-  period. A hijacked agent can then pay that wallet one tranche per period until the owner sweeps, or pay any other menu
-  address instead. The amount at risk is the wallet balance plus every tranche the owner does not claw back. `hook.py`'s two tools
+  the shape of a budget the chain itself enforces, once Bitcoin has a template covenant, and
+  [LIGHTNING.md](LIGHTNING.md) shows it refilling an agent's Lightning balance through swap locks, one tranche per
+  period. `htlc.py` (the swap lock) and `lightning_run.py` (five LND nodes on a throwaway regtest node) are the parts
+  to reuse. `hook.py`'s two tools
   (`pay_menu`, `send`) and its planted-order notes make a ready test harness for your own agent.
 - **Covenant proposals (CTV, TEMPLATEHASH, BIP-448).** This is the same use case written for both opcodes, put through
   the same attacks, and both pass. `hashes.py` implements both template hashes in a 45-line file and passes every
@@ -187,11 +211,14 @@ Everything here is MIT-licensed. Take what helps; you don't need to ask.
 - **One coin, exact amount.** A second deposit is a second allowance, and any overfunding goes to a miner.
 - **The menu is fixed** when the coins are locked. A new payee means a new vault.
 - **The menu is the blast radius.** A hijacked agent can still pay the wrong item on the menu, or skip.
+- **Quantum:** a quantum computer could take a vault through its Taproot key. BIP-360 would close that; it is not
+  testable on today's test nodes.
 - **The owner's key can do anything.** Keep it cold.
 - **On CTV the witness is free.** An annex can ride along on an honest payment; the money still goes exactly where
   planned.
 
-All eleven are in [LIMITS.md](LIMITS.md).
+All thirteen are in [LIMITS.md](LIMITS.md), including the quantum one: a quantum computer could take a vault through
+its Taproot key.
 
 ## Prior art
 
@@ -212,6 +239,9 @@ secondstar/hook.py       Captain Hook: scripted attacks, or a local model in the
 secondstar/__main__.py   the one-command run on a throwaway regtest node
 secondstar/hashes.py     BIP-119 and BIP-446 template hashes
 secondstar/secp.py       secp256k1, BIP-340, BIP-341 in plain Python (test networks only)
+secondstar/htlc.py       the swap lock: claim with a secret, or refund to the owner after a delay
+secondstar/lightning_run.py   the Lightning layer: five LND nodes, three designs, every claim checked
+secondstar/paid_api.py   a pay-per-call API in the L402 style, and an agent client with a spending cap
 tests/vectors/           the official BIP-119, BIP-340 and BIP-446 test vectors, unmodified
 .github/workflows/       the same checks on GitHub's machines
 ```

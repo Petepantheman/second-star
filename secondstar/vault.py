@@ -1,6 +1,7 @@
 """Second Star: a Bitcoin allowance an AI agent can spend from without ever holding a key.
 
-Each period the coins sit in a Taproot output with no key path (the BIP-341 unspendable internal key). Its leaves:
+Each period the coins sit in a Taproot output whose internal key is the BIP-341 NUMS point, so nobody can use the key
+path (short of breaking the curve; see LIMITS.md). Its leaves:
 
   pay:i   pay exactly `tranche` sats to menu address i, the rest into the next period's vault
   skip    pay nobody, move everything into the next period's vault
@@ -90,8 +91,18 @@ def value_at(funding: int, tranche: int, paid: int) -> int:
 
 
 def build(funding: int, tranche: int, periods: int, delay: int, menu: list[bytes], cold_spk: bytes,
-          cold_x: bytes, opcode: str = "ctv") -> Vault:
-    """Every state the coins can ever be in, keyed by (period, payments made so far)."""
+          cold_x: bytes, opcode: str = "ctv", menus: list[list[bytes]] | None = None) -> Vault:
+    """Every state the coins can ever be in, keyed by (period, payments made so far).
+
+    `menus`, if given, replaces `menu` per payment: the k-th payment (k = payments made so far) may go to any address
+    in menus[k]. That lets each payment go to a fresh address, such as a new swap lock per tranche."""
+    if menus is not None:
+        if len(menus) < periods or len({len(m) for m in menus}) != 1:
+            raise ValueError("menus needs one list per possible payment, all the same length")
+        flat = [a for m in menus for a in m]
+        if len(set(flat)) != len(flat):
+            raise ValueError("every address in menus must be distinct")
+        menu = flat
     if opcode not in OPCODES:
         raise ValueError(f"opcode must be one of {OPCODES}")
     if len(cold_x) != 32:
@@ -113,7 +124,7 @@ def build(funding: int, tranche: int, periods: int, delay: int, menu: list[bytes
             value = value_at(funding, tranche, paid)
             last = period + 1 == periods
             made: list[tuple[str, Tx]] = []
-            for i, spk in enumerate(menu):
+            for i, spk in enumerate(menu if menus is None else menus[paid]):
                 nxt = cold_spk if last else states[(period + 1, paid + 1)].script_pubkey
                 made.append((f"pay:{i}", Tx(3, 0, [TxIn(sequence=delay)], [
                     TxOut(tranche, spk), TxOut(value - tranche, nxt), TxOut(0, ANCHOR)])))

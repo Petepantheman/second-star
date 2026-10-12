@@ -87,3 +87,20 @@ BIP-119 hashes the transaction's version, locktime, sequences and outputs, but n
 Taproot annex to an honest CTV payment. Relay refuses it (`bad-witness-nonstandard`), but a miner can confirm it. The
 run measures this: the payment confirms with the annex attached, and the money goes exactly where the template says.
 BIP-446 commits to the annex, so the TEMPLATEHASH vault refuses the same transaction at both levels.
+
+## 12. A quantum computer could take the vault through its Taproot key
+
+Every vault is a Taproot output. Its key is `Q = H + tG`, where nobody knows the discrete log of the unspendable point
+`H`. That stops honest people from signing, but Shor's algorithm would recover the discrete log of `Q` itself, which
+is on-chain from the moment the vault is funded. A key-path signature for `Q` skips every leaf. The covenant leaves are
+hash-only and are not the weak point. The owner's key becomes a second exposure once a sweep or a refund puts it
+on-chain; from then on, that one key can sweep every vault and refund every swap lock that uses it.
+[BIP-360](https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki) (Pay-to-Merkle-Root, Draft) removes the key
+path for exactly this reason. It is not active on Bitcoin Inquisition 29.4, so a quantum-resistant vault cannot be
+built and tested here yet. Lightning has the same exposure through its channel and node keys.
+
+## 13. Lightning has its own limits
+
+Connecting the allowance to an agent's Lightning wallet adds limits of its own: whatever reaches the wallet is hot,
+the owner's side becomes a trusted online part, stealing a refill through a swap needs a dishonest provider, and each
+swap vault must be funded exactly once. They are listed with their measurements in [LIGHTNING.md](LIGHTNING.md).

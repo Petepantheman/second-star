@@ -47,3 +47,36 @@ jobs:
         with:
           name: node-answers
           path: result.json
+
+  lightning:
+    needs: offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      matrix:
+        opcode: [ctv, templatehash]
+    env:
+      INQ: bitcoin-29.4-inq
+      INQ_SHA256: 7ad3cb745575f7c21916cf3c294a95f59e11e5bf6e37c4a47b92697cf4723e22
+      LND: lnd-linux-amd64-v0.21.0-beta
+      LND_SHA256: 3fbdecaca4255f94f6aab22bef2d2ecfc780dda2da40e39dc1b75411a625e14a
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Download Bitcoin Inquisition and LND and check their hashes
+        run: |
+          curl -sSfL -o inq.tar.gz "https://github.com/bitcoin-inquisition/bitcoin/releases/download/v29.4-inq/${INQ}-x86_64-linux-gnu.tar.gz"
+          echo "${INQ_SHA256}  inq.tar.gz" | sha256sum -c -
+          tar xzf inq.tar.gz
+          curl -sSfL -o lnd.tar.gz "https://github.com/lightningnetwork/lnd/releases/download/v0.21.0-beta/${LND}.tar.gz"
+          echo "${LND_SHA256}  lnd.tar.gz" | sha256sum -c -
+          tar xzf lnd.tar.gz
+      - name: Second Star on Lightning, three acts
+        run: python -m secondstar.lightning_run --bitcoind "./${INQ}/bin/bitcoind" --lnd "./${LND}/lnd" --opcode ${{ matrix.opcode }} --out lightning.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: lightning-${{ matrix.opcode }}
+          path: lightning.json
